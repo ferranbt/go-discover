@@ -1,0 +1,20 @@
+# The k8s go-discover provider uses Dep because that was the only vendoring
+# tool with the flexibility and stability that worked with the k8s client
+# libraries and allowed us to express only retrieving those libraries.
+#
+# To update:
+#
+#   dep ensure
+#
+
+ignored = [
+  "github.com/hashicorp/go-discover",
+]
+
+[[constraint]]
+  name = "github.com/ericchiang/k8s"
+  version = "v1.1.0"
+
+[prune]
+  go-tests = true
+  unused-packages = true
