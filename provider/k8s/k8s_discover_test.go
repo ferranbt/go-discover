@@ -7,10 +7,10 @@ import (
 	"reflect"
 	"testing"
 
+	corev1 "github.com/ericchiang/k8s/apis/core/v1"
+	metav1 "github.com/ericchiang/k8s/apis/meta/v1"
 	discover "github.com/hashicorp/go-discover"
 	"github.com/hashicorp/go-discover/provider/k8s"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var _ discover.Provider = (*k8s.Provider)(nil)
@@ -50,18 +50,18 @@ func TestPodAddrs(t *testing.T) {
 	cases := []struct {
 		Name     string
 		Args     map[string]string
-		Pods     []corev1.Pod
+		Pods     []*corev1.Pod
 		Expected []string
 	}{
 		{
 			"Simple pods (no ready, no annotations, etc.)",
 			nil,
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase:  corev1.PodRunning,
-						PodIP:  "1.2.3.4",
-						HostIP: "2.3.4.5",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase:  stringPtr("Running"),
+						PodIP:  stringPtr("1.2.3.4"),
+						HostIP: stringPtr("2.3.4.5"),
 					},
 				},
 			},
@@ -71,12 +71,12 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Simple pods host network",
 			map[string]string{"host_network": "true"},
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase:  corev1.PodRunning,
-						PodIP:  "1.2.3.4",
-						HostIP: "2.3.4.5",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase:  stringPtr("Running"),
+						PodIP:  stringPtr("1.2.3.4"),
+						HostIP: stringPtr("2.3.4.5"),
 					},
 				},
 			},
@@ -86,18 +86,18 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Only running pods",
 			nil,
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodPending,
-						PodIP: "2.3.4.5",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Pending"),
+						PodIP: stringPtr("2.3.4.5"),
 					},
 				},
 
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						PodIP: "1.2.3.4",
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Running"),
+						PodIP: stringPtr("1.2.3.4"),
 					},
 				},
 			},
@@ -107,50 +107,50 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Only pods that are ready",
 			nil,
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodPending,
-						PodIP: "2.3.4.5",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Pending"),
+						PodIP: stringPtr("2.3.4.5"),
 					},
 				},
 
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						PodIP: "ready",
-						Conditions: []corev1.PodCondition{
-							corev1.PodCondition{
-								Type:   corev1.PodReady,
-								Status: corev1.ConditionTrue,
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Running"),
+						PodIP: stringPtr("ready"),
+						Conditions: []*corev1.PodCondition{
+							&corev1.PodCondition{
+								Type:   stringPtr("Ready"),
+								Status: stringPtr("True"),
 							},
 						},
 					},
 				},
 
 				// Not true
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						PodIP: "not-ready",
-						Conditions: []corev1.PodCondition{
-							corev1.PodCondition{
-								Type:   corev1.PodReady,
-								Status: corev1.ConditionUnknown,
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Running"),
+						PodIP: stringPtr("not-ready"),
+						Conditions: []*corev1.PodCondition{
+							&corev1.PodCondition{
+								Type:   stringPtr("Ready"),
+								Status: stringPtr("Unknown"),
 							},
 						},
 					},
 				},
 
 				// Not ready type, ignored
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						PodIP: "scheduled",
-						Conditions: []corev1.PodCondition{
-							corev1.PodCondition{
-								Type:   corev1.PodScheduled,
-								Status: corev1.ConditionUnknown,
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Running"),
+						PodIP: stringPtr("scheduled"),
+						Conditions: []*corev1.PodCondition{
+							&corev1.PodCondition{
+								Type:   stringPtr("Scheduled"),
+								Status: stringPtr("Unknown"),
 							},
 						},
 					},
@@ -162,34 +162,34 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Port annotation (named)",
 			nil,
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						PodIP: "1.2.3.4",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Running"),
+						PodIP: stringPtr("1.2.3.4"),
 					},
 
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{
-							corev1.Container{
-								Ports: []corev1.ContainerPort{
-									corev1.ContainerPort{
-										Name:          "my-port",
-										HostPort:      1234,
-										ContainerPort: 8500,
+					Spec: &corev1.PodSpec{
+						Containers: []*corev1.Container{
+							&corev1.Container{
+								Ports: []*corev1.ContainerPort{
+									&corev1.ContainerPort{
+										Name:          stringPtr("my-port"),
+										HostPort:      int32Ptr(1234),
+										ContainerPort: int32Ptr(8500),
 									},
 
-									corev1.ContainerPort{
-										Name:          "http",
-										HostPort:      80,
-										ContainerPort: 8080,
+									&corev1.ContainerPort{
+										Name:          stringPtr("http"),
+										HostPort:      int32Ptr(80),
+										ContainerPort: int32Ptr(8080),
 									},
 								},
 							},
 						},
 					},
 
-					ObjectMeta: metav1.ObjectMeta{
+					Metadata: &metav1.ObjectMeta{
 						Annotations: map[string]string{
 							k8s.AnnotationKeyPort: "my-port",
 						},
@@ -202,29 +202,29 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Port annotation (named with host network)",
 			map[string]string{"host_network": "true"},
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase:  corev1.PodRunning,
-						PodIP:  "1.2.3.4",
-						HostIP: "2.3.4.5",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase:  stringPtr("Running"),
+						PodIP:  stringPtr("1.2.3.4"),
+						HostIP: stringPtr("2.3.4.5"),
 					},
 
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{
-							corev1.Container{
-								Ports: []corev1.ContainerPort{
-									corev1.ContainerPort{
-										Name:          "http",
-										HostPort:      80,
-										ContainerPort: 8080,
+					Spec: &corev1.PodSpec{
+						Containers: []*corev1.Container{
+							&corev1.Container{
+								Ports: []*corev1.ContainerPort{
+									&corev1.ContainerPort{
+										Name:          stringPtr("http"),
+										HostPort:      int32Ptr(80),
+										ContainerPort: int32Ptr(8080),
 									},
 								},
 							},
 						},
 					},
 
-					ObjectMeta: metav1.ObjectMeta{
+					Metadata: &metav1.ObjectMeta{
 						Annotations: map[string]string{
 							k8s.AnnotationKeyPort: "http",
 						},
@@ -237,28 +237,28 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Port annotation (direct)",
 			nil,
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						PodIP: "1.2.3.4",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase: stringPtr("Running"),
+						PodIP: stringPtr("1.2.3.4"),
 					},
 
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{
-							corev1.Container{
-								Ports: []corev1.ContainerPort{
-									corev1.ContainerPort{
-										Name:          "http",
-										HostPort:      80,
-										ContainerPort: 8080,
+					Spec: &corev1.PodSpec{
+						Containers: []*corev1.Container{
+							&corev1.Container{
+								Ports: []*corev1.ContainerPort{
+									&corev1.ContainerPort{
+										Name:          stringPtr("http"),
+										HostPort:      int32Ptr(80),
+										ContainerPort: int32Ptr(8080),
 									},
 								},
 							},
 						},
 					},
 
-					ObjectMeta: metav1.ObjectMeta{
+					Metadata: &metav1.ObjectMeta{
 						Annotations: map[string]string{
 							k8s.AnnotationKeyPort: "4600",
 						},
@@ -271,29 +271,29 @@ func TestPodAddrs(t *testing.T) {
 		{
 			"Port annotation (direct with host network)",
 			map[string]string{"host_network": "true"},
-			[]corev1.Pod{
-				corev1.Pod{
-					Status: corev1.PodStatus{
-						Phase:  corev1.PodRunning,
-						PodIP:  "1.2.3.4",
-						HostIP: "2.3.4.5",
+			[]*corev1.Pod{
+				&corev1.Pod{
+					Status: &corev1.PodStatus{
+						Phase:  stringPtr("Running"),
+						PodIP:  stringPtr("1.2.3.4"),
+						HostIP: stringPtr("2.3.4.5"),
 					},
 
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{
-							corev1.Container{
-								Ports: []corev1.ContainerPort{
-									corev1.ContainerPort{
-										Name:          "http",
-										HostPort:      80,
-										ContainerPort: 8080,
+					Spec: &corev1.PodSpec{
+						Containers: []*corev1.Container{
+							&corev1.Container{
+								Ports: []*corev1.ContainerPort{
+									&corev1.ContainerPort{
+										Name:          stringPtr("http"),
+										HostPort:      int32Ptr(80),
+										ContainerPort: int32Ptr(8080),
 									},
 								},
 							},
 						},
 					},
 
-					ObjectMeta: metav1.ObjectMeta{
+					Metadata: &metav1.ObjectMeta{
 						Annotations: map[string]string{
 							k8s.AnnotationKeyPort: "4600",
 						},
@@ -318,3 +318,6 @@ func TestPodAddrs(t *testing.T) {
 		})
 	}
 }
+
+func stringPtr(v string) *string { return &v }
+func int32Ptr(v int32) *int32    { return &v }

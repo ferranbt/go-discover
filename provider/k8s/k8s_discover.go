@@ -2,22 +2,19 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"path/filepath"
 	"strconv"
 
+	"github.com/ericchiang/k8s"
+	corev1 "github.com/ericchiang/k8s/apis/core/v1"
+	"github.com/ghodss/yaml"
+
 	"github.com/hashicorp/go-multierror"
 	"github.com/mitchellh/go-homedir"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-
-	// Register all known auth mechanisms since we might be authenticating
-	// from anywhere.
-	_ "k8s.io/client-go/plugin/pkg/client/auth"
 )
 
 const (
@@ -62,41 +59,18 @@ func (p *Provider) Addrs(args map[string]string, l *log.Logger) ([]string, error
 		return nil, fmt.Errorf("discover-k8s: invalid provider " + args["provider"])
 	}
 
-	// Get the configuration. This can come from multiple sources. We first
-	// try kubeconfig it is set directly, then we fall back to in-cluster
-	// auth. Finally, we try the default kubeconfig path.
-	kubeconfig := args["kubeconfig"]
-	if kubeconfig == "" {
-		// If kubeconfig is empty, let's first try the default directory.
-		// This is must faster than trying in-cluster auth so we try this
-		// first.
-		dir, err := homedir.Dir()
-		if err != nil {
-			return nil, fmt.Errorf("discover-k8s: error retrieving home directory: %s", err)
-		}
-		kubeconfig = filepath.Join(dir, ".kube", "config")
-	}
-
 	// First try to get the configuration from the kubeconfig value
-	config, configErr := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if configErr != nil {
-		configErr = fmt.Errorf("discover-k8s: error loading kubeconfig: %s", configErr)
-
+	client, clientErr := initClientFromKubeconfig(args["kubeconfig"])
+	if clientErr != nil {
 		// kubeconfig failed, fall back and try in-cluster config. We do
 		// this as the fallback since this makes network connections and
 		// is much slower to fail.
 		var err error
-		config, err = rest.InClusterConfig()
+		client, err = k8s.NewInClusterClient()
 		if err != nil {
-			return nil, multierror.Append(configErr, fmt.Errorf(
+			return nil, multierror.Append(clientErr, fmt.Errorf(
 				"discover-k8s: error loading in-cluster config: %s", err))
 		}
-	}
-
-	// Initialize the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("discover-k8s: error initializing k8s client: %s", err)
 	}
 
 	namespace := args["namespace"]
@@ -104,16 +78,43 @@ func (p *Provider) Addrs(args map[string]string, l *log.Logger) ([]string, error
 		namespace = "default"
 	}
 
-	// List all the pods based on the filters we requested
-	pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{
-		LabelSelector: args["label_selector"],
-		FieldSelector: args["field_selector"],
-	})
+	var pods corev1.PodList
+	err := client.List(context.Background(), namespace, &pods,
+		k8s.QueryParam("labelSelector", args["label_selector"]),
+		k8s.QueryParam("fieldSelector", args["field_selector"]))
 	if err != nil {
 		return nil, fmt.Errorf("discover-k8s: error listing pods: %s", err)
 	}
 
-	return PodAddrs(pods, args, l)
+	return PodAddrs(&pods, args, l)
+}
+
+func initClientFromKubeconfig(path string) (*k8s.Client, error) {
+	// Get the configuration. This can come from multiple sources. We first
+	// try kubeconfig it is set directly, then we fall back to in-cluster
+	// auth. Finally, we try the default kubeconfig path.
+	if path == "" {
+		// If kubeconfig is empty, let's first try the default directory.
+		// This is must faster than trying in-cluster auth so we try this
+		// first.
+		dir, err := homedir.Dir()
+		if err != nil {
+			return nil, fmt.Errorf("discover-k8s: error retrieving home directory: %s", err)
+		}
+		path = filepath.Join(dir, ".kube", "config")
+	}
+
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("discover-k8s: error loading kubeconfig: %s", err)
+	}
+
+	var config k8s.Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("discover-k8s: error parsing kubeconfig: %s", err)
+	}
+
+	return k8s.NewClient(&config)
 }
 
 // PodAddrs extracts the addresses from a list of pods.
@@ -134,43 +135,47 @@ func PodAddrs(pods *corev1.PodList, args map[string]string, l *log.Logger) ([]st
 	var addrs []string
 PodLoop:
 	for _, pod := range pods.Items {
-		if pod.Status.Phase != corev1.PodRunning {
+		if v := pod.Status.GetPhase(); v != "Running" {
 			l.Printf("[DEBUG] discover-k8s: ignoring pod %q, not running: %q",
-				pod.Name, pod.Status.Phase)
+				pod.Metadata.GetName(), v)
 			continue
 		}
 
 		// If there is a Ready condition available, we need that to be true.
 		// If no ready condition is set, then we accept this pod regardless.
 		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady && condition.Status != corev1.ConditionTrue {
-				l.Printf("[DEBUG] discover-k8s: ignoring pod %q, not ready state", pod.Name)
+			if condition.GetType() == "Ready" && condition.GetStatus() != "True" {
+				l.Printf("[DEBUG] discover-k8s: ignoring pod %q, not ready state",
+					pod.Metadata.GetName())
 				continue PodLoop
 			}
 		}
 
 		// Get the IP address that we will join.
-		addr := pod.Status.PodIP
+		addr := pod.Status.GetPodIP()
 		if hostNetwork {
-			addr = pod.Status.HostIP
+			addr = pod.Status.GetHostIP()
 		}
 		if addr == "" {
 			// This can be empty according to the API docs, so we protect that.
-			l.Printf("[DEBUG] discover-k8s: ignoring pod %q, requested IP is empty", pod.Name)
+			l.Printf("[DEBUG] discover-k8s: ignoring pod %q, requested IP is empty",
+				pod.Metadata.GetName())
 			continue
 		}
 
 		// We only use the port if it is specified as an annotation. The
 		// annotation value can be a name or a number.
-		if v := pod.Annotations[AnnotationKeyPort]; v != "" {
-			port, err := podPort(&pod, v, hostNetwork)
-			if err != nil {
-				l.Printf("[DEBUG] discover-k8s: ignoring pod %q, error retrieving port: %s",
-					pod.Name, err)
-				continue
-			}
+		if pod.Metadata != nil && pod.Metadata.Annotations != nil {
+			if v := pod.Metadata.Annotations[AnnotationKeyPort]; v != "" {
+				port, err := podPort(pod, v, hostNetwork)
+				if err != nil {
+					l.Printf("[DEBUG] discover-k8s: ignoring pod %q, error retrieving port: %s",
+						pod.Metadata.GetName(), err)
+					continue
+				}
 
-			addr = fmt.Sprintf("%s:%d", addr, port)
+				addr = fmt.Sprintf("%s:%d", addr, port)
+			}
 		}
 
 		addrs = append(addrs, addr)
@@ -187,18 +192,18 @@ func podPort(pod *corev1.Pod, annotation string, host bool) (int32, error) {
 	// First look for a matching port matching the value of the annotation.
 	for _, container := range pod.Spec.Containers {
 		for _, portDef := range container.Ports {
-			if portDef.Name == annotation {
+			if portDef.GetName() == annotation {
 				if host {
 					// It is possible for HostPort to be zero, if that is the
 					// case then we ignore this port.
-					if portDef.HostPort == 0 {
+					if portDef.GetHostPort() == 0 {
 						continue
 					}
 
-					return portDef.HostPort, nil
+					return portDef.GetHostPort(), nil
 				}
 
-				return portDef.ContainerPort, nil
+				return portDef.GetContainerPort(), nil
 			}
 		}
 	}
